@@ -1,7 +1,7 @@
 # Ignore build and node_modules
 build/* linguist-vendored
 node_modules/* linguist-vendored
-examples/* linguist-vendored
+example/* linguist-vendored
 
 # Treat .tsx as TypeScript
 *.tsx linguist-language=TypeScript
