@@ -1,7 +1,8 @@
-# Ignore build and node_modules
+# Ignore Files and directories that are not part of the source code
 build/* linguist-vendored
 node_modules/* linguist-vendored
 example/* linguist-vendored
+coverage/* linguist-vendored
 
 # Treat .tsx as TypeScript
 *.tsx linguist-language=TypeScript
