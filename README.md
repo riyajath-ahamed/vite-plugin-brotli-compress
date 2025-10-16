@@ -3,6 +3,8 @@
 </p>
 
 # vite-plugin-brotli-compress
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 
 A high-performance Vite plugin that compresses build assets using Brotli compression algorithm. This plugin automatically compresses your JavaScript, CSS, HTML, and other assets after the build process, reducing bundle sizes and improving loading times.
 
