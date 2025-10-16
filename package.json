@@ -1,0 +1,43 @@
+{
+  "name": "vite-plugin-brotli-compress",
+  "version": "1.0.0",
+  "description": "A Vite plugin to compress build assets using Brotli, built with tsdown.",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsdown src/index.ts --format cjs,esm --dts",
+    "prepublishOnly": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/riyajath-ahamed/vite-plugin-brotli-compress.git"
+  },
+  "keywords": [
+    "vite",
+    "vite-plugin",
+    "compress",
+    "brotli",
+    "react",
+    "typescript"
+  ],
+  "author": "riyajath-ahamed <riyajath.ahamed@gmail.com> (https://github.com/riyajath-ahamed)",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/riyajath-ahamed/vite-plugin-brotli-compress/issues"
+  },
+  "homepage": "https://github.com/riyajath-ahamed/vite-plugin-brotli-compress#readme",
+  "peerDependencies": {
+    "vite": "^7.1.10"
+  }
+}
