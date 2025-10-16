@@ -8,5 +8,11 @@
     "skipLibCheck": true,
     "outDir": "dist"
   },
+  "exclude": [
+    "node_modules",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/__tests__/**"
+  ],
   "include": ["src"]
 }
