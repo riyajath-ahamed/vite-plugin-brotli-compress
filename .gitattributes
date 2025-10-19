@@ -3,9 +3,11 @@ build/* linguist-vendored
 node_modules/* linguist-vendored
 example/* linguist-vendored
 coverage/* linguist-vendored
+dist/* linguist-vendored
 
 # Treat .tsx as TypeScript
 *.tsx linguist-language=TypeScript
 
 # Ignore docs from language count
 docs/* linguist-documentation
+README.md linguist-documentation
