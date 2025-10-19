@@ -1,6 +1,6 @@
 {
   "name": "vite-plugin-brotli-compress",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "A Vite plugin to compress build assets using Brotli, built with tsdown.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -43,7 +43,7 @@
   },
   "homepage": "https://github.com/riyajath-ahamed/vite-plugin-brotli-compress#readme",
   "peerDependencies": {
-    "vite": "^7.1.10"
+    "vite": ">=4.0.0 <8.0.0"
   },
   "devDependencies": {
     "@types/node": "^24.8.0",
