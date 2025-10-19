@@ -5,6 +5,9 @@ example/* linguist-vendored
 coverage/* linguist-vendored
 dist/* linguist-vendored
 
+# Ignore HTML files from language count
+*.html linguist-documentation
+
 # Treat .tsx as TypeScript
 *.tsx linguist-language=TypeScript
 
