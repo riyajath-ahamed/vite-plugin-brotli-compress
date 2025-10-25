@@ -43,7 +43,7 @@
   },
   "homepage": "https://github.com/riyajath-ahamed/vite-plugin-brotli-compress#readme",
   "peerDependencies": {
-    "vite": "^7.1.10"
+    "vite": ">=4.0.0 <8.0.0"
   },
   "devDependencies": {
     "@types/node": "^24.8.0",
