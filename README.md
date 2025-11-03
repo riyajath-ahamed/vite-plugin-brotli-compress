@@ -45,19 +45,30 @@ export default defineConfig({
 ```typescript
 // vite.config.ts
 import { defineConfig } from 'vite'
-import brotliCompress, { BrotliQuality } from 'vite-plugin-brotli-compress'
+import brotliCompress, { BrotliQuality, CompressionType, GzipLevel } from 'vite-plugin-brotli-compress'
 
 export default defineConfig({
   plugins: [
     brotliCompress({
+      // Compression type: Brotli, Gzip, or Both
+      type: CompressionType.BOTH,
+      
       // File extensions to compress
       extensions: ['js', 'css', 'html', 'json', 'svg', 'wasm'],
       
-      // Compression quality (0-11)
+      // Brotli compression quality (0-11)
       quality: BrotliQuality.HIGH,
       
-      // Minimum file size to compress (in bytes)
+      // Gzip compression level (0-9)
+      gzipLevel: GzipLevel.DEFAULT,
+      
+      // File size limits
       minSize: 1024,
+      maxSize: 10 * 1024 * 1024, // 10MB
+      
+      // File filtering with glob patterns
+      excludePatterns: ['**/vendor/**', '**/node_modules/**'],
+      includePatterns: ['**/src/**', '**/assets/**'],
       
       // Whether to delete original files after compression
       deleteOriginal: false,
@@ -70,9 +81,17 @@ export default defineConfig({
         return fileSize > 2048
       },
       
-      // Parallel processing options
+      // Performance options
       parallel: true,
       maxParallel: 10,
+      skipExisting: true, // Skip if compressed file already exists
+      
+      // Error handling
+      continueOnError: true,
+      retryAttempts: 2,
+      errorCallback: (error, filePath) => {
+        console.error(`Failed to compress ${filePath}:`, error)
+      },
       
       // Verbose logging
       verbose: true
@@ -87,14 +106,33 @@ export default defineConfig({
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
+| `type` | `CompressionType` | `CompressionType.BROTLI` | Compression algorithm to use (BROTLI, GZIP, BOTH) |
 | `extensions` | `string[]` | `['js', 'html', 'css', 'json', 'ico', 'svg', 'wasm']` | File extensions to compress |
 | `verbose` | `boolean` | `true` | Whether to log compression results |
-| `quality` | `BrotliQuality \| number` | `BrotliQuality.DEFAULT` | Compression quality (0-11) |
+| `quality` | `BrotliQuality \| number` | `BrotliQuality.DEFAULT` | Brotli compression quality (0-11) |
+| `gzipLevel` | `GzipLevel \| number` | `GzipLevel.DEFAULT` | Gzip compression level (0-9) |
 | `minSize` | `number` | `1024` | Minimum file size in bytes to compress |
+| `maxSize` | `number` | `undefined` | Maximum file size in bytes to compress |
 | `deleteOriginal` | `boolean` | `false` | Whether to delete original files after compression |
 | `shouldCompress` | `function` | `undefined` | Custom function to determine if a file should be compressed |
+| `excludePatterns` | `string[]` | `[]` | Glob patterns to exclude from compression |
+| `includePatterns` | `string[]` | `[]` | Glob patterns to include for compression |
 | `parallel` | `boolean` | `true` | Whether to compress files in parallel |
 | `maxParallel` | `number` | `10` | Maximum number of parallel compression operations |
+| `skipExisting` | `boolean` | `false` | Whether to skip compression if compressed file already exists |
+| `continueOnError` | `boolean` | `true` | Whether to continue compression if some files fail |
+| `retryAttempts` | `number` | `0` | Number of retry attempts for failed compressions |
+| `errorCallback` | `function` | `undefined` | Callback function called when compression fails |
+
+### CompressionType Enum
+
+```typescript
+enum CompressionType {
+  BROTLI = 'brotli',  // Brotli compression only
+  GZIP = 'gzip',      // Gzip compression only
+  BOTH = 'both'       // Both Brotli and Gzip compression
+}
+```
 
 ### BrotliQuality Enum
 
@@ -105,6 +143,19 @@ enum BrotliQuality {
   DEFAULT = 6,    // Default compression
   HIGH = 9,       // High quality compression
   MAXIMUM = 11    // Maximum quality compression
+}
+```
+
+### GzipLevel Enum
+
+```typescript
+enum GzipLevel {
+  NONE = 0,       // No compression
+  FASTEST = 1,    // Fastest compression
+  FAST = 3,       // Fast compression
+  DEFAULT = 6,    // Default compression
+  HIGH = 9,       // High compression
+  MAXIMUM = 9     // Maximum compression
 }
 ```
 
@@ -284,16 +335,32 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Changelog
 
+### v1.1.0
+- ✨ **New Features:**
+  - Added Gzip compression support alongside Brotli
+  - Enhanced file filtering with glob patterns (excludePatterns, includePatterns)
+  - Better error handling with retry logic and error callbacks
+  - Performance improvements with skipExisting option
+  - Support for maximum file size limits
+  - Enhanced compression statistics reporting
+- 🔧 **Improvements:**
+  - Improved error handling and recovery
+  - Better parallel processing with configurable concurrency
+  - Enhanced logging with compression type information
+  - More flexible configuration options
+- ⚠️ **Breaking Changes:** None - fully backward compatible
+
 ### v1.0.0
 - Initial release
 - Basic Brotli compression functionality
 - Configurable options and quality settings
 - Comprehensive test suite
 - TypeScript support
+- **Vite compatibility**: Supports Vite v4.0.0 through v7.x.x
 
 ## Support
 
-- 📖 [Documentation](https://github.com/your-username/vite-plugin-brotli-compress#readme)
-- 🐛 [Issue Tracker](https://github.com/your-username/vite-plugin-brotli-compress/issues)
-- 💬 [Discussions](https://github.com/your-username/vite-plugin-brotli-compress/discussions)
+- 📖 [Documentation](https://github.com/riyajath-ahamed/vite-plugin-brotli-compress?tab=readme-ov-file)
+- 🐛 [Issue Tracker](https://github.com/riyajath-ahamed/vite-plugin-brotli-compress/issues)
+- 💬 [Discussions](https://github.com/riyajath-ahamed/vite-plugin-brotli-compress/discussions)
 
