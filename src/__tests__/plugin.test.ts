@@ -86,7 +86,7 @@ describe('vite-plugin-brotli-compress', () => {
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    vi.resetAllMocks();
   });
 
   describe('plugin creation', () => {

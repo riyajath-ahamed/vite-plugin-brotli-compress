@@ -46,14 +46,19 @@
     "vite": ">=4.0.0 <8.0.0"
   },
   "devDependencies": {
-    "@types/node": "^24.8.0",
-    "@vitest/coverage-v8": "^3.2.4",
-    "@vitest/ui": "^3.2.4",
-    "tsdown": "^0.15.7",
-    "typescript": "^5.9.3",
-    "vitest": "^3.2.4"
+    "@types/node": "^24.12.2",
+    "@vitest/coverage-v8": "^4.1.4",
+    "@vitest/ui": "^4.1.4",
+    "tsdown": "^0.21.7",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.4"
   },
   "optionalDependencies": {
-    "@rollup/rollup-linux-x64-gnu": "^4.52.4"
+    "@rolldown/binding-linux-x64-gnu": "^1.0.0-rc.12"
+  },
+  "overrides": {
+    "vitest": {
+      "vite": "^7.3.2"
+    }
   }
 }
