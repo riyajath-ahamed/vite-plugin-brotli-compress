@@ -70,9 +70,10 @@ jobs:
       - name: Check build artifacts
         run: |
           ls -la dist/
-          test -f dist/index.js
+          test -f dist/index.cjs
           test -f dist/index.mjs
-          test -f dist/index.d.ts
+          test -f dist/index.d.cts
+          test -f dist/index.d.mts
 
   security:
     name: Security Audit
