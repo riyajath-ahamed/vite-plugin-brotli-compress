@@ -141,6 +141,49 @@ export interface BrotliOptions {
    * @param filePath - The file path that failed
    */
   errorCallback?: (error: Error, filePath: string) => void;
+  /**
+   * Minimum compression ratio (0-1) required to keep the compressed file.
+   * If the compressed file is not at least this much smaller than the original,
+   * it will be discarded. For example, 0.05 means the compressed file must be
+   * at least 5% smaller than the original.
+   * @default 0 (keep all compressed files)
+   */
+  compressionThreshold?: number;
+  /**
+   * Callback function called for each file as compression progresses.
+   * @param progress - Progress information including current file, index, total, and percentage
+   */
+  onProgress?: (progress: CompressionProgress) => void;
+  /**
+   * Callback function called when all compression is complete.
+   * @param stats - Final compression statistics
+   */
+  onComplete?: (stats: CompressionStats) => void;
+  /**
+   * Size budget configuration. Warns or errors if compressed output exceeds limits.
+   */
+  budget?: BudgetOptions;
+}
+
+/**
+ * Size budget options for enforcing compressed output limits.
+ */
+export interface BudgetOptions {
+  /**
+   * Maximum total compressed size in bytes for all files combined.
+   */
+  maxTotalSize?: number;
+  /**
+   * Maximum compressed size in bytes for any single file.
+   */
+  maxFileSize?: number;
+  /**
+   * Action to take when budget is exceeded.
+   * - 'warn': Log a warning (default)
+   * - 'error': Throw an error to fail the build
+   * @default 'warn'
+   */
+  action?: 'warn' | 'error';
 }
 
 /**
@@ -157,6 +200,18 @@ export interface CompressionStats {
   timeElapsed: number;
   brotliFiles?: number;
   gzipFiles?: number;
+  /** Per-file compression details for budget checks and reporting. */
+  fileDetails: FileCompressionDetail[];
+}
+
+/**
+ * Per-file compression detail.
+ */
+export interface FileCompressionDetail {
+  filePath: string;
+  originalSize: number;
+  compressedSize: number;
+  algorithm: 'brotli' | 'gzip';
 }
 
 /**
@@ -259,7 +314,11 @@ export default function brotliCompress(options: BrotliOptions = {}): Plugin {
     skipExisting = false,
     continueOnError = true,
     retryAttempts = 0,
-    errorCallback
+    errorCallback,
+    compressionThreshold = 0,
+    onProgress,
+    onComplete,
+    budget
   } = options;
 
   return {
@@ -313,7 +372,9 @@ export default function brotliCompress(options: BrotliOptions = {}): Plugin {
           verbose,
           continueOnError,
           retryAttempts,
-          errorCallback
+          errorCallback,
+          compressionThreshold,
+          onProgress
         });
 
         const timeElapsed = Date.now() - startTime;
@@ -321,6 +382,16 @@ export default function brotliCompress(options: BrotliOptions = {}): Plugin {
 
         if (verbose) {
           logCompressionResults(stats, type);
+        }
+
+        // Check size budget
+        if (budget) {
+          checkBudget(stats, budget);
+        }
+
+        // Call onComplete callback
+        if (onComplete) {
+          onComplete(stats);
         }
       } catch (error) {
         console.error('[vite-plugin-brotli-compress] Error during compression:', error);
@@ -346,6 +417,8 @@ interface CompressionOptions {
   continueOnError: boolean;
   retryAttempts: number;
   errorCallback?: (error: Error, filePath: string) => void;
+  compressionThreshold: number;
+  onProgress?: (progress: CompressionProgress) => void;
 }
 
 /**
@@ -434,10 +507,57 @@ async function findFiles(
 }
 
 /**
+ * Internal per-file compression result.
+ */
+interface FileCompressResult {
+  compressedFiles: number;
+  failedFiles: number;
+  skippedFiles: number;
+  totalOriginalSize: number;
+  totalCompressedSize: number;
+  brotliFiles?: number;
+  gzipFiles?: number;
+  fileDetails: FileCompressionDetail[];
+}
+
+/**
+ * Merges a single file result into the accumulated stats.
+ */
+function mergeFileResult(stats: CompressionStats, result: FileCompressResult): void {
+  stats.compressedFiles += result.compressedFiles;
+  stats.failedFiles += result.failedFiles;
+  stats.skippedFiles += result.skippedFiles;
+  stats.totalOriginalSize += result.totalOriginalSize;
+  stats.totalCompressedSize += result.totalCompressedSize;
+  stats.brotliFiles = (stats.brotliFiles || 0) + (result.brotliFiles || 0);
+  stats.gzipFiles = (stats.gzipFiles || 0) + (result.gzipFiles || 0);
+  stats.fileDetails.push(...result.fileDetails);
+}
+
+/**
+ * Emits a progress callback if configured.
+ */
+function emitProgress(
+  options: CompressionOptions,
+  filePath: string,
+  currentIndex: number,
+  totalFiles: number
+): void {
+  if (options.onProgress) {
+    options.onProgress({
+      currentFile: filePath,
+      currentIndex,
+      totalFiles,
+      percentage: Math.round(((currentIndex + 1) / totalFiles) * 100)
+    });
+  }
+}
+
+/**
  * Compresses multiple files with the given options.
  */
 async function compressFiles(
-  files: string[], 
+  files: string[],
   options: CompressionOptions
 ): Promise<CompressionStats> {
   const stats: CompressionStats = {
@@ -450,32 +570,32 @@ async function compressFiles(
     compressionRatio: 0,
     timeElapsed: 0,
     brotliFiles: 0,
-    gzipFiles: 0
+    gzipFiles: 0,
+    fileDetails: []
   };
+
+  let processedIndex = 0;
 
   if (options.parallel) {
     // Compress files in parallel with concurrency limit
     const chunks = chunkArray(files, options.maxParallel);
-    
+
     for (const chunk of chunks) {
       const results = await Promise.allSettled(
         chunk.map(filePath => compressFileWithRetry(filePath, options))
       );
-      
+
       for (const result of results) {
         if (result.status === 'fulfilled') {
-          stats.compressedFiles += result.value.compressedFiles;
-          stats.failedFiles += result.value.failedFiles;
-          stats.totalOriginalSize += result.value.totalOriginalSize;
-          stats.totalCompressedSize += result.value.totalCompressedSize;
-          stats.brotliFiles = (stats.brotliFiles || 0) + (result.value.brotliFiles || 0);
-          stats.gzipFiles = (stats.gzipFiles || 0) + (result.value.gzipFiles || 0);
+          mergeFileResult(stats, result.value);
         } else {
           stats.failedFiles++;
           if (options.verbose) {
             console.warn(`[vite-plugin-brotli-compress] Failed to compress file: ${result.reason}`);
           }
         }
+        emitProgress(options, files[processedIndex], processedIndex, files.length);
+        processedIndex++;
       }
     }
   } else {
@@ -483,12 +603,7 @@ async function compressFiles(
     for (const filePath of files) {
       try {
         const result = await compressFileWithRetry(filePath, options);
-        stats.compressedFiles += result.compressedFiles;
-        stats.failedFiles += result.failedFiles;
-        stats.totalOriginalSize += result.totalOriginalSize;
-        stats.totalCompressedSize += result.totalCompressedSize;
-        stats.brotliFiles = (stats.brotliFiles || 0) + (result.brotliFiles || 0);
-        stats.gzipFiles = (stats.gzipFiles || 0) + (result.gzipFiles || 0);
+        mergeFileResult(stats, result);
       } catch (error) {
         stats.failedFiles++;
         if (options.verbose) {
@@ -498,11 +613,13 @@ async function compressFiles(
           options.errorCallback(error as Error, filePath);
         }
       }
+      emitProgress(options, filePath, processedIndex, files.length);
+      processedIndex++;
     }
   }
 
-  stats.compressionRatio = stats.totalOriginalSize > 0 
-    ? ((stats.totalOriginalSize - stats.totalCompressedSize) / stats.totalOriginalSize) * 100 
+  stats.compressionRatio = stats.totalOriginalSize > 0
+    ? ((stats.totalOriginalSize - stats.totalCompressedSize) / stats.totalOriginalSize) * 100
     : 0;
 
   return stats;
@@ -512,18 +629,11 @@ async function compressFiles(
  * Compresses a file with retry logic.
  */
 async function compressFileWithRetry(
-  filePath: string, 
+  filePath: string,
   options: CompressionOptions
-): Promise<{
-  compressedFiles: number;
-  failedFiles: number;
-  totalOriginalSize: number;
-  totalCompressedSize: number;
-  brotliFiles?: number;
-  gzipFiles?: number;
-}> {
+): Promise<FileCompressResult> {
   let lastError: Error | null = null;
-  
+
   for (let attempt = 0; attempt <= options.retryAttempts; attempt++) {
     try {
       return await compressFile(filePath, options);
@@ -538,7 +648,7 @@ async function compressFileWithRetry(
       }
     }
   }
-  
+
   // All retries failed
   if (options.errorCallback) {
     options.errorCallback(lastError!, filePath);
@@ -547,28 +657,54 @@ async function compressFileWithRetry(
 }
 
 /**
+ * Checks if a compressed file meets the compression threshold.
+ * If not, deletes the compressed file and returns false.
+ */
+function meetsThreshold(
+  originalSize: number,
+  compressedSize: number,
+  threshold: number,
+  compressedPath: string,
+  verbose: boolean
+): boolean {
+  if (threshold <= 0 || originalSize === 0) return true;
+
+  const ratio = (originalSize - compressedSize) / originalSize;
+  if (ratio < threshold) {
+    // Compressed file doesn't save enough — discard it
+    try {
+      fs.unlinkSync(compressedPath);
+    } catch {
+      // ignore cleanup errors
+    }
+    if (verbose) {
+      console.log(
+        `[vite-plugin-brotli-compress] Skipped ${compressedPath} (ratio ${(ratio * 100).toFixed(1)}% < threshold ${(threshold * 100).toFixed(1)}%)`
+      );
+    }
+    return false;
+  }
+  return true;
+}
+
+/**
  * Compresses a single file using Brotli and/or Gzip.
  */
 function compressFile(
-  filePath: string, 
+  filePath: string,
   options: CompressionOptions
-): Promise<{
-  compressedFiles: number;
-  failedFiles: number;
-  totalOriginalSize: number;
-  totalCompressedSize: number;
-  brotliFiles?: number;
-  gzipFiles?: number;
-}> {
+): Promise<FileCompressResult> {
   return new Promise(async (resolve, reject) => {
     try {
-      const results = {
+      const results: FileCompressResult = {
         compressedFiles: 0,
         failedFiles: 0,
+        skippedFiles: 0,
         totalOriginalSize: 0,
         totalCompressedSize: 0,
         brotliFiles: 0,
-        gzipFiles: 0
+        gzipFiles: 0,
+        fileDetails: []
       };
 
       // Get original file size
@@ -579,9 +715,21 @@ function compressFile(
       if (options.type === CompressionType.BROTLI || options.type === CompressionType.BOTH) {
         try {
           const brotliResult = await compressWithBrotli(filePath, options);
-          results.compressedFiles++;
-          results.totalCompressedSize += brotliResult.compressedSize;
-          results.brotliFiles = 1;
+          const compressedPath = `${filePath}.br`;
+
+          if (meetsThreshold(stats.size, brotliResult.compressedSize, options.compressionThreshold, compressedPath, options.verbose)) {
+            results.compressedFiles++;
+            results.totalCompressedSize += brotliResult.compressedSize;
+            results.brotliFiles = 1;
+            results.fileDetails.push({
+              filePath: compressedPath,
+              originalSize: stats.size,
+              compressedSize: brotliResult.compressedSize,
+              algorithm: 'brotli'
+            });
+          } else {
+            results.skippedFiles++;
+          }
         } catch (error) {
           results.failedFiles++;
           if (options.verbose) {
@@ -594,9 +742,21 @@ function compressFile(
       if (options.type === CompressionType.GZIP || options.type === CompressionType.BOTH) {
         try {
           const gzipResult = await compressWithGzip(filePath, options);
-          results.compressedFiles++;
-          results.totalCompressedSize += gzipResult.compressedSize;
-          results.gzipFiles = 1;
+          const compressedPath = `${filePath}.gz`;
+
+          if (meetsThreshold(stats.size, gzipResult.compressedSize, options.compressionThreshold, compressedPath, options.verbose)) {
+            results.compressedFiles++;
+            results.totalCompressedSize += gzipResult.compressedSize;
+            results.gzipFiles = 1;
+            results.fileDetails.push({
+              filePath: compressedPath,
+              originalSize: stats.size,
+              compressedSize: gzipResult.compressedSize,
+              algorithm: 'gzip'
+            });
+          } else {
+            results.skippedFiles++;
+          }
         } catch (error) {
           results.failedFiles++;
           if (options.verbose) {
@@ -638,16 +798,15 @@ function compressWithBrotli(filePath: string, options: CompressionOptions): Prom
     const compressedPath = `${filePath}.br`;
     const writeStream = fs.createWriteStream(compressedPath);
 
-    let compressedSize = 0;
-
-    writeStream.on('data', (chunk) => {
-      compressedSize += chunk.length;
-    });
-
     readStream.pipe(compressStream).pipe(writeStream);
 
     writeStream.on('finish', () => {
-      resolve({ compressedSize });
+      try {
+        const compressedSize = fs.statSync(compressedPath).size;
+        resolve({ compressedSize });
+      } catch (error) {
+        reject(error);
+      }
     });
 
     writeStream.on('error', reject);
@@ -668,16 +827,15 @@ function compressWithGzip(filePath: string, options: CompressionOptions): Promis
     const compressedPath = `${filePath}.gz`;
     const writeStream = fs.createWriteStream(compressedPath);
 
-    let compressedSize = 0;
-
-    writeStream.on('data', (chunk) => {
-      compressedSize += chunk.length;
-    });
-
     readStream.pipe(compressStream).pipe(writeStream);
 
     writeStream.on('finish', () => {
-      resolve({ compressedSize });
+      try {
+        const compressedSize = fs.statSync(compressedPath).size;
+        resolve({ compressedSize });
+      } catch (error) {
+        reject(error);
+      }
     });
 
     writeStream.on('error', reject);
@@ -694,6 +852,45 @@ function chunkArray<T>(array: T[], chunkSize: number): T[][] {
     chunks.push(array.slice(i, i + chunkSize));
   }
   return chunks;
+}
+
+/**
+ * Checks compressed output against budget limits.
+ * Warns or throws based on the configured action.
+ */
+function checkBudget(stats: CompressionStats, budget: BudgetOptions): void {
+  const action = budget.action || 'warn';
+  const violations: string[] = [];
+
+  // Check total compressed size
+  if (budget.maxTotalSize !== undefined && stats.totalCompressedSize > budget.maxTotalSize) {
+    violations.push(
+      `Total compressed size ${formatBytes(stats.totalCompressedSize)} exceeds budget of ${formatBytes(budget.maxTotalSize)}`
+    );
+  }
+
+  // Check per-file compressed size
+  if (budget.maxFileSize !== undefined) {
+    for (const detail of stats.fileDetails) {
+      if (detail.compressedSize > budget.maxFileSize) {
+        violations.push(
+          `${detail.filePath} (${formatBytes(detail.compressedSize)}) exceeds per-file budget of ${formatBytes(budget.maxFileSize)}`
+        );
+      }
+    }
+  }
+
+  if (violations.length === 0) return;
+
+  const header = '[vite-plugin-brotli-compress] Budget exceeded:';
+  const message = `${header}\n${violations.map(v => `  - ${v}`).join('\n')}`;
+
+  if (action === 'error') {
+    throw new Error(message);
+  }
+
+  // action === 'warn'
+  console.warn(message);
 }
 
 /**
