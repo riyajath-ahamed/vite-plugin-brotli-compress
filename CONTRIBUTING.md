@@ -106,66 +106,41 @@ npm test -- --grep "integration"
 
 ## Release Process
 
-This project uses automated versioning and releases through GitHub Actions. There are three ways to trigger releases:
+This project uses a manual release workflow through GitHub Actions.
 
-### 1. Automated Versioning (Recommended)
+### Triggering a Release
 
-The project automatically detects version bumps based on commit message conventions:
-
-- **Minor version** (`1.0.0` → `1.1.0`): `feat:` or `feature:` commits
-- **Patch version** (`1.0.0` → `1.0.1`): `fix:`, `bugfix:`, `chore:`, `docs:`, `style:`, `refactor:`, `perf:`, `test:` commits
-- **Major version** (`1.0.0` → `2.0.0`): Commits with `BREAKING CHANGE` or `breaking change`
-
-**Dynamic Release Notes**: Release notes are automatically generated from commit messages since the last tag, ensuring accurate and up-to-date changelogs.
-
-### 2. Manual Release
-
-Use the GitHub Actions "Manual Release" workflow:
-
-1. Go to **Actions** → **Manual Release**
+1. Go to **Actions** → **Release**
 2. Click **Run workflow**
-3. Select version type (patch/minor/major)
-4. Choose whether to create GitHub release
-5. Click **Run workflow**
+3. Select version bump type (`patch`, `minor`, or `major`)
+4. Click **Run workflow**
 
-**Dynamic Release Notes**: Manual releases also generate changelogs automatically from commit history.
+The workflow will automatically:
 
-### 3. Tag-based Release
-
-Create and push a version tag:
-
-```bash
-git tag v1.1.0
-git push origin v1.1.0
-```
+- Run the full test suite
+- Build the package
+- Bump the version in `package.json`
+- Commit, tag, and push the version change
+- Publish the package to npm
+- Generate a changelog from commit history since the last tag
+- Create a GitHub Release with the changelog and installation instructions
 
 ## GitHub Workflows
 
-The project includes several GitHub Actions workflows:
+The project includes two GitHub Actions workflows:
 
 ### 1. CI Workflow (`.github/workflows/ci.yml`)
-- Runs on every push and pull request
-- Tests on Node.js 18, 20, and 22
-- Runs linting, type checking, and tests
-- Generates coverage reports
+- **Triggers**: Pushes to `main` and pull requests to `main` or `beta`
+- **Test job**: Runs on Node.js 18, 20, and 21 — executes linting, type checking, tests, and coverage upload to Codecov
+- **Build job**: Builds the package and verifies that `dist/index.js`, `dist/index.mjs`, and `dist/index.d.ts` are produced
+- **Security job**: Runs `npm audit` at moderate severity level
 
 ### 2. Release Workflow (`.github/workflows/release.yml`)
-- Triggers on version tags (`v*`)
-- Runs tests and builds package
-- Publishes to npm automatically
-- Creates GitHub releases with detailed changelog
-
-### 3. Manual Release Workflow (`.github/workflows/manual-release.yml`)
-- Manual trigger with version type selection
-- Automated version bumping and tagging
-- Optional GitHub release creation
-- Full CI/CD pipeline
-
-### 4. Automated Versioning Workflow (`.github/workflows/version.yml`)
-- Triggers on pushes to main branch
-- Analyzes commit messages for version bumps
-- Automatically bumps version and creates tags
-- Creates release pull requests
+- **Trigger**: Manual (`workflow_dispatch`) with a version bump type selection (`patch` / `minor` / `major`)
+- Runs the test suite and builds the package
+- Bumps the version, commits, tags, and pushes to `main`
+- Publishes to npm
+- Generates a changelog from commits since the last tag and creates a GitHub Release
 
 ## Commit Message Guidelines
 
