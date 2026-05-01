@@ -45,7 +45,7 @@ export enum GzipLevel {
   DEFAULT = 6,
   /** High compression */
   HIGH = 9,
-  /** Maximum compression */
+  // eslint-disable-next-line @typescript-eslint/no-duplicate-enum-values
   MAXIMUM = 9
 }
 
@@ -464,7 +464,7 @@ async function findFiles(
             visitedDirs
           );
           files.push(...subFiles);
-        } catch (error) {
+        } catch (_error) {
           // Skip directories that can't be accessed
           continue;
         }
@@ -492,7 +492,7 @@ async function findFiles(
           }
           
           files.push(fullPath);
-        } catch (error) {
+        } catch (_error) {
           // Skip files that can't be accessed
           continue;
         }
@@ -500,7 +500,7 @@ async function findFiles(
     }
     
     return files;
-  } catch (error) {
+  } catch (_error) {
     // Directory doesn't exist or can't be accessed
     return [];
   }

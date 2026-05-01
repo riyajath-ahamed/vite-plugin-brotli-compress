@@ -1,6 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import fs from 'fs';
-import path from 'path';
+import { describe, it, expect, vi } from 'vitest';
 import { BrotliQuality } from '../index';
 
 // Mock fs module
@@ -52,10 +50,7 @@ describe('formatBytes utility', () => {
     const testBytes = [0, 1024, 1024 * 1024, 1024 * 1024 * 1024, 1536];
     
     // These would be the expected formatted values
-    const expectedFormats = ['0 B', '1 KB', '1 MB', '1 GB', '1.5 KB'];
-    
-    // Test that we can handle these byte values
-    testBytes.forEach((bytes, index) => {
+    testBytes.forEach((bytes) => {
       expect(bytes).toBeGreaterThanOrEqual(0);
       expect(typeof bytes).toBe('number');
     });

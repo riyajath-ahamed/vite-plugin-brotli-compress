@@ -2,12 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import brotliCompress, {
-  BrotliOptions,
   CompressionType,
   CompressionStats,
   CompressionProgress,
-  BudgetOptions,
-  FileCompressionDetail
 } from '../index';
 
 // Helper function to create temporary test directory

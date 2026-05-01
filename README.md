@@ -12,6 +12,9 @@ A high-performance Vite plugin that compresses build assets using Brotli and Gzi
   <a href="https://www.npmjs.com/package/vite-plugin-brotli-compress"><img src="https://img.shields.io/npm/v/vite-plugin-brotli-compress.svg?style=flat&colorA=18181B&colorB=28CF8D" alt="npm version" /></a>
   <a href="https://www.npmjs.com/package/vite-plugin-brotli-compress"><img src="https://img.shields.io/npm/dm/vite-plugin-brotli-compress.svg?style=flat&colorA=18181B&colorB=28CF8D" alt="npm downloads" /></a>
   <a href="https://bundlephobia.com/package/vite-plugin-brotli-compress"><img src="https://img.shields.io/bundlephobia/minzip/vite-plugin-brotli-compress?style=flat&colorA=18181B&colorB=28CF8D&label=minzip" alt="bundle size" /></a>
+  <a href="https://github.com/riyajath-ahamed/vite-plugin-brotli-compress/actions/workflows/ci.yml"><img src="https://github.com/riyajath-ahamed/vite-plugin-brotli-compress/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://codecov.io/gh/riyajath-ahamed/vite-plugin-brotli-compress"><img src="https://codecov.io/gh/riyajath-ahamed/vite-plugin-brotli-compress/branch/main/graph/badge.svg" alt="codecov" /></a>
+  <a href="https://github.com/riyajath-ahamed/vite-plugin-brotli-compress"><img src="https://img.shields.io/github/stars/riyajath-ahamed/vite-plugin-brotli-compress?style=flat&colorA=18181B&colorB=28CF8D" alt="GitHub stars" /></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat&colorA=18181B" alt="License: MIT" /></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-007ACC?style=flat&colorA=18181B&logo=typescript&logoColor=white" alt="TypeScript" /></a>
   <a href="https://nodejs.org"><img src="https://img.shields.io/node/v/vite-plugin-brotli-compress?style=flat&colorA=18181B&colorB=28CF8D" alt="node version" /></a>
@@ -61,7 +64,7 @@ yarn add --dev vite-plugin-brotli-compress
 pnpm add -D vite-plugin-brotli-compress
 ```
 
-**Requirements**: Node.js >= 16 | Vite >= 4.0.0
+**Requirements**: Node.js >= 18 | Vite >= 4.0.0
 
 ---
 
@@ -512,29 +515,7 @@ npm run build
 
 ## Changelog
 
-### v1.3.0
-- **Compression Threshold**: Discard compressed files that don't meet a minimum savings ratio (`compressionThreshold`)
-- **Progress Callback**: Real-time `onProgress` callback with file name, index, total, and percentage
-- **Stats Callback**: `onComplete` callback providing full `CompressionStats` including per-file `fileDetails`
-- **Size Budgets**: `budget` option with `maxTotalSize`, `maxFileSize`, and `action` (`'warn'` or `'error'`) to enforce compressed output limits
-- **Bug Fix**: Fixed compressed file size tracking (was always reporting 0 due to incorrect stream event listener)
-- No breaking changes - fully backward compatible
-
-### v1.1.0
-- Added Gzip compression support alongside Brotli
-- Enhanced file filtering with glob patterns (`excludePatterns`, `includePatterns`)
-- Better error handling with retry logic and error callbacks
-- Performance improvements with `skipExisting` option
-- Support for maximum file size limits
-- Enhanced compression statistics reporting
-- No breaking changes - fully backward compatible
-
-### v1.0.0
-- Initial release
-- Brotli compression with configurable quality
-- Parallel processing, smart filtering, comprehensive test suite
-- TypeScript support with full type definitions
-- **Vite compatibility**: v4.0.0 through v7.x.x
+See [CHANGELOG.md](CHANGELOG.md) for a full list of changes.
 
 ---
 
