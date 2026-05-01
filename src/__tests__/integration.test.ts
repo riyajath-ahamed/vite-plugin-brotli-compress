@@ -239,7 +239,7 @@ describe('Integration Tests', () => {
       createTestFile(testDir, 'compress-me.js', content);
       createTestFile(testDir, 'skip-me.js', content);
 
-      const shouldCompress = (filePath: string, fileSize: number) => {
+      const shouldCompress = (filePath: string, _fileSize: number) => {
         return filePath.includes('compress-me');
       };
 

@@ -47,7 +47,6 @@ describe('Performance Tests', () => {
 
   describe('Compression quality vs performance', () => {
     it('should compress faster with lower quality settings', async () => {
-      const content = 'test content '.repeat(10000); // ~120KB
       createLargeTestFile(testDir, 'test.js', 100);
 
       // Test with fastest quality
@@ -95,7 +94,6 @@ describe('Performance Tests', () => {
     });
 
     it('should achieve better compression with higher quality', async () => {
-      const content = 'test content '.repeat(10000); // ~120KB
       createLargeTestFile(testDir, 'test.js', 100);
 
       // Test with fastest quality
