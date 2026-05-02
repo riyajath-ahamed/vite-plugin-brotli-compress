@@ -14,7 +14,16 @@ let nativeZstdAvailable: boolean | null = null;
 
 function hasNativeZstd(): boolean {
   if (nativeZstdAvailable !== null) return nativeZstdAvailable;
-  nativeZstdAvailable = typeof (zlib as any).createZstdCompress === 'function';
+  if (typeof (zlib as any).createZstdCompress !== 'function') {
+    nativeZstdAvailable = false;
+    return false;
+  }
+  try {
+    (zlib as any).createZstdCompress();
+    nativeZstdAvailable = true;
+  } catch {
+    nativeZstdAvailable = false;
+  }
   return nativeZstdAvailable;
 }
 

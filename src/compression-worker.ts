@@ -109,7 +109,10 @@ export default async function compress(input: WorkerInput): Promise<WorkerOutput
     case 'zstd': {
       compressedPath = `${filePath}.zst`;
       const level = Math.min(Math.max(zstdLevel, 1), 22);
-      const hasNative = typeof (zlib as any).createZstdCompress === 'function';
+      let hasNative = false;
+      if (typeof (zlib as any).createZstdCompress === 'function') {
+        try { (zlib as any).createZstdCompress(); hasNative = true; } catch { /* unavailable */ }
+      }
       if (hasNative) {
         const stream = (zlib as any).createZstdCompress({ params: { level } });
         result = await compressWithStream(filePath, compressedPath, stream, verifyIntegrity);
