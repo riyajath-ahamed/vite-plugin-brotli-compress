@@ -1,14 +1,3 @@
-## ⚠️ Package Renamed
-
-This package has moved to [vite-plugin-compressor](https://npmjs.com/package/vite-plugin-compressor).
-
-It now supports **Brotli**, **Zstd**, and **Gzip**.
-
-```bash
-npm install vite-plugin-compressor
-```
-
-
 <p align="center">
 <img src="https://github.com/riyajath-ahamed/vite-plugin-brotli-compress/blob/main/assets/riyajath-ahamed/vite-plugin-brotli-compress.svg" width="640" height="320" />
 </p>
@@ -16,7 +5,7 @@ npm install vite-plugin-compressor
 <h1 align="center">vite-plugin-brotli-compress</h1>
 
 <p align="center">
-A high-performance Vite plugin that compresses build assets using Brotli and Gzip, reducing bundle sizes by up to 80% and improving loading times.
+A high-performance Vite plugin that compresses build assets using Brotli, Gzip, and Zstandard (zstd), reducing bundle sizes by up to 80% and improving loading times.
 </p>
 
 <p align="center">
@@ -34,6 +23,21 @@ A high-performance Vite plugin that compresses build assets using Brotli and Gzi
 
 ---
 
+## What's New in v2.0
+
+- **Zstandard compression** (`CompressionType.ZSTD`) — the only Vite compression plugin with zstd support. Uses native `zlib` on Node 21.7+ or `@mongodb-js/zstd` on older versions.
+- **Worker threads** (`useWorkerThreads: true`) — offloads CPU-bound compression to a [Piscina](https://github.com/piscinajs/piscina) thread pool for faster large builds.
+- **Build report** (`compressionReport: './stats.json'`) — writes per-file compression stats to a JSON file for CI dashboards and bundle size tracking.
+- **Integrity verification** (`verifyIntegrity: true`) — SHA-256 hash verification of compressed files post-write catches disk corruption and partial writes.
+- **Vite 5+ minimum** — dropped Vite 4 support; tested against Vite 5, 6, and 7.
+
+### Breaking Changes
+
+- Minimum Vite version is now `>=5.0.0` (was `>=4.0.0`)
+- `FileCompressionDetail.algorithm` type now includes `'zstd'`
+
+---
+
 ## Why Compress Build Assets?
 
 Modern web applications ship megabytes of JavaScript, CSS, and HTML. Without compression, users download the full uncompressed payload on every page load. Brotli typically achieves **15-25% better compression** than Gzip on web assets, and all modern browsers support it.
@@ -45,13 +49,16 @@ Modern web applications ship megabytes of JavaScript, CSS, and HTML. Without com
 | Bandwidth cost | Higher | Lower |
 | Lighthouse score | Lower | Higher |
 
-This plugin runs **after** Vite's build step. It reads the output directory, compresses matching files, and writes `.br` / `.gz` variants alongside the originals. Your web server then serves the pre-compressed files directly, avoiding on-the-fly compression overhead.
+This plugin runs **after** Vite's build step. It reads the output directory, compresses matching files, and writes `.br` / `.gz` / `.zst` variants alongside the originals. Your web server then serves the pre-compressed files directly, avoiding on-the-fly compression overhead.
 
 ---
 
 ## Features
 
-- **Brotli + Gzip**: Compress with Brotli, Gzip, or both simultaneously
+- **Brotli + Gzip + Zstd**: Compress with Brotli, Gzip, Zstandard, or Brotli+Gzip simultaneously
+- **Worker Threads**: Offload CPU-bound compression to a thread pool via [Piscina](https://github.com/piscinajs/piscina) for faster builds
+- **Build Report**: Write compression stats to a JSON file for CI dashboards and bundle size tracking
+- **Integrity Verification**: SHA-256 hash verification of compressed files to catch disk corruption
 - **Parallel Processing**: Configurable concurrency for fast builds on multi-core machines
 - **Smart Filtering**: Target specific extensions, file sizes, and glob patterns
 - **Compression Threshold**: Automatically discard compressed files that don't save enough space
@@ -75,7 +82,17 @@ yarn add --dev vite-plugin-brotli-compress
 pnpm add -D vite-plugin-brotli-compress
 ```
 
-**Requirements**: Node.js >= 18 | Vite >= 4.0.0
+**Requirements**: Node.js >= 18 | Vite >= 5.0.0
+
+**Optional dependencies** (install only what you need):
+
+```bash
+# For Zstd compression on Node.js < 21.7 (Node 21.7+ has native zstd in zlib)
+npm install @mongodb-js/zstd
+
+# For worker thread support
+npm install piscina
+```
 
 ---
 
@@ -126,6 +143,14 @@ export default defineConfig({
       parallel: true,
       maxParallel: 10,
       skipExisting: true,
+      useWorkerThreads: true,   // offload to thread pool (requires piscina)
+      maxWorkerThreads: 4,
+
+      // Build report — write stats JSON for CI dashboards
+      compressionReport: './compression-stats.json',
+
+      // Integrity — verify compressed files after write
+      verifyIntegrity: true,
 
       // Size budgets
       budget: {
@@ -159,10 +184,11 @@ export default defineConfig({
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `type` | `CompressionType` | `BROTLI` | Algorithm: `BROTLI`, `GZIP`, or `BOTH` |
+| `type` | `CompressionType` | `BROTLI` | Algorithm: `BROTLI`, `GZIP`, `ZSTD`, or `BOTH` |
 | `extensions` | `string[]` | `['js','html','css','json','ico','svg','wasm']` | File extensions to compress |
 | `quality` | `number` | `6` | Brotli quality level (0-11) |
 | `gzipLevel` | `number` | `6` | Gzip compression level (0-9) |
+| `zstdLevel` | `number` | `3` | Zstd compression level (1-22) |
 | `minSize` | `number` | `1024` | Minimum file size in bytes |
 | `maxSize` | `number` | `undefined` | Maximum file size in bytes |
 | `compressionThreshold` | `number` | `0` | Min savings ratio (0-1) to keep compressed file |
@@ -172,7 +198,11 @@ export default defineConfig({
 | `includePatterns` | `string[]` | `[]` | Glob patterns to include (overrides exclude) |
 | `parallel` | `boolean` | `true` | Compress files in parallel |
 | `maxParallel` | `number` | `10` | Max concurrent compressions |
-| `skipExisting` | `boolean` | `false` | Skip if `.br`/`.gz` already exists |
+| `useWorkerThreads` | `boolean` | `false` | Offload compression to worker threads (requires `piscina`) |
+| `maxWorkerThreads` | `number` | `CPU cores` | Max number of worker threads |
+| `skipExisting` | `boolean` | `false` | Skip if `.br`/`.gz`/`.zst` already exists |
+| `compressionReport` | `string` | `undefined` | File path to write JSON compression report |
+| `verifyIntegrity` | `boolean` | `false` | SHA-256 hash verify compressed files after write |
 | `continueOnError` | `boolean` | `true` | Continue if some files fail |
 | `retryAttempts` | `number` | `0` | Retry count for failed compressions |
 | `errorCallback` | `(error, path) => void` | `undefined` | Called on compression failure |
@@ -196,7 +226,8 @@ export default defineConfig({
 enum CompressionType {
   BROTLI = 'brotli',
   GZIP   = 'gzip',
-  BOTH   = 'both'
+  ZSTD   = 'zstd',
+  BOTH   = 'both'   // Brotli + Gzip
 }
 
 // Brotli quality presets (0-11)
@@ -217,6 +248,16 @@ enum GzipLevel {
   HIGH    = 9,
   MAXIMUM = 9
 }
+
+// Zstd level presets (1-22)
+enum ZstdLevel {
+  FASTEST   = 1,
+  FAST      = 3,
+  DEFAULT   = 3,
+  HIGH      = 9,
+  VERY_HIGH = 15,
+  MAXIMUM   = 22
+}
 ```
 
 ---
@@ -232,17 +273,20 @@ enum GzipLevel {
 
 ---
 
-## Brotli vs Gzip
+## Brotli vs Gzip vs Zstd
 
-| | Brotli | Gzip |
-|---|---|---|
-| **Compression ratio** | ~15-25% better | Baseline |
-| **Decompression speed** | Comparable | Comparable |
-| **Browser support** | All modern browsers | Universal |
-| **Best for** | Static pre-compressed assets | Broad compatibility fallback |
-| **File extension** | `.br` | `.gz` |
+| | Brotli | Gzip | Zstd |
+|---|---|---|---|
+| **Compression ratio** | ~15-25% better than gzip | Baseline | ~10-20% better than gzip |
+| **Compression speed** | Slower at high levels | Fast | Very fast |
+| **Decompression speed** | Comparable | Comparable | Faster |
+| **Browser support** | All modern browsers | Universal | Cloudflare, nginx, growing |
+| **Best for** | Static pre-compressed assets | Broad compatibility fallback | High-throughput / CDN edge |
+| **File extension** | `.br` | `.gz` | `.zst` |
 
-**Recommendation**: Use `CompressionType.BOTH` in production to serve Brotli to modern browsers and fall back to Gzip for older clients.
+**Recommendations**:
+- Use `CompressionType.BOTH` (Brotli + Gzip) in production for maximum browser coverage.
+- Use `CompressionType.ZSTD` if your CDN supports Zstd (e.g. Cloudflare) for the best speed/ratio trade-off.
 
 ---
 
@@ -339,6 +383,82 @@ brotliCompress({
 })
 ```
 
+### Zstd Compression
+
+```typescript
+import brotliCompress, { CompressionType, ZstdLevel } from 'vite-plugin-brotli-compress'
+
+brotliCompress({
+  type: CompressionType.ZSTD,
+  zstdLevel: ZstdLevel.HIGH, // 1-22, default 3
+
+  // On Node.js 21.7+ native zlib zstd is used automatically.
+  // On older Node, install @mongodb-js/zstd:
+  //   npm install @mongodb-js/zstd
+})
+```
+
+### Worker Threads
+
+```typescript
+brotliCompress({
+  // Offload compression to a thread pool — ideal for large builds
+  useWorkerThreads: true,
+  maxWorkerThreads: 4, // defaults to number of CPU cores
+
+  // Requires piscina:
+  //   npm install piscina
+})
+```
+
+### Build Report
+
+```typescript
+brotliCompress({
+  // Write a JSON report after compression — great for CI dashboards
+  compressionReport: './compression-stats.json',
+
+  // Report includes: per-file sizes, algorithms, savings percentages,
+  // totals, compression ratio, and timing
+})
+```
+
+The report JSON looks like:
+
+```json
+{
+  "version": "1.0",
+  "timestamp": "2026-05-02T12:00:00.000Z",
+  "summary": {
+    "totalFiles": 12,
+    "compressedFiles": 12,
+    "totalOriginalSize": 524288,
+    "totalCompressedSize": 104858,
+    "compressionRatio": 80.0,
+    "timeElapsed": 342
+  },
+  "files": [
+    {
+      "filePath": "dist/app.js.br",
+      "originalSize": 262144,
+      "compressedSize": 52429,
+      "algorithm": "brotli",
+      "savings": "80.00%"
+    }
+  ]
+}
+```
+
+### Integrity Verification
+
+```typescript
+brotliCompress({
+  // Verify compressed files via SHA-256 hash after write
+  // Catches rare disk corruption or partial writes in CI
+  verifyIntegrity: true
+})
+```
+
 ### Compression Threshold
 
 ```typescript
@@ -353,25 +473,20 @@ brotliCompress({
 ### Progress & Stats Callbacks
 
 ```typescript
-import fs from 'fs'
-
 brotliCompress({
   // Real-time progress — useful in CI logs
   onProgress: ({ currentFile, currentIndex, totalFiles, percentage }) => {
     console.log(`[${percentage}%] Compressing ${currentFile} (${currentIndex + 1}/${totalFiles})`)
   },
 
-  // Final stats — pipe to dashboards, write manifests, or fail CI
+  // Final stats — pipe to dashboards or fail CI
   onComplete: (stats) => {
     console.log(`Compressed ${stats.compressedFiles} files, saved ${stats.compressionRatio.toFixed(1)}%`)
     console.log(`Skipped: ${stats.skippedFiles} | Failed: ${stats.failedFiles}`)
+  },
 
-    // Write a compression manifest for CI
-    fs.writeFileSync(
-      'compression-report.json',
-      JSON.stringify(stats.fileDetails, null, 2)
-    )
-  }
+  // Or use compressionReport for automatic JSON output:
+  compressionReport: './compression-stats.json'
 })
 ```
 
@@ -407,10 +522,13 @@ Pre-compressed files need your web server configured to serve them.
 ### Nginx
 
 ```nginx
-# Enable Brotli static serving
+# Enable Brotli and Gzip static serving
 location ~* \.(js|css|html|json|svg|wasm)$ {
     brotli_static on;
     gzip_static on;
+
+    # For Zstd (requires nginx-mod-zstd or OpenResty):
+    # zstd_static on;
 
     # Fallback for servers without brotli_static module
     # try_files $uri.br $uri.gz $uri =404;
@@ -449,7 +567,7 @@ location ~* \.(js|css|html|json|svg|wasm)$ {
 
 ### Vercel / Netlify / Cloudflare Pages
 
-These platforms automatically serve Brotli-compressed assets if `.br` files exist alongside the originals. No extra configuration needed - just deploy your `dist/` folder.
+These platforms automatically serve Brotli-compressed assets if `.br` files exist alongside the originals. Cloudflare also supports Zstd (`Accept-Encoding: zstd`). No extra configuration needed - just deploy your `dist/` folder.
 
 ---
 
@@ -468,19 +586,25 @@ vite build
 [ Filters by extension, size, patterns, shouldCompress() ]
     |
     v
-[ Compresses in parallel (configurable concurrency) ]
+[ Compresses in parallel — main thread or worker pool ]
     |
     v
 [ Applies threshold check — discards if savings too low ]
     |
     v
+[ Verifies integrity via SHA-256 (optional) ]
+    |
+    v
 [ Checks budget limits — warns or errors ]
+    |
+    v
+[ Writes compression report JSON (optional) ]
     |
     v
 [ Calls onProgress per file, onComplete with final stats ]
     |
     v
-[ dist/app.js.br, dist/app.js.gz ready to serve ]
+[ dist/app.js.br, dist/app.js.gz, dist/app.js.zst ready to serve ]
 ```
 
 ---
