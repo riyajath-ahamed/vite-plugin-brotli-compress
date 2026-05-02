@@ -4,15 +4,8 @@ import path from 'path';
 import zlib from 'zlib';
 import brotliCompress, { CompressionType, CompressionStats, ZstdLevel } from '../index';
 
-function isZstdAvailable(): boolean {
-  if (typeof (zlib as any).createZstdCompress === 'function') return true;
-  try {
-    require('@mongodb-js/zstd');
-    return true;
-  } catch {
-    return false;
-  }
-}
+const zstdAvailable = typeof (zlib as any).createZstdCompress === 'function'
+  || await import('@mongodb-js/zstd').then(() => true, () => false);
 
 function createTestDir(): string {
   const testDir = path.join(process.cwd(), 'test-fixtures', `test-zstd-${Date.now()}`);
@@ -82,8 +75,6 @@ describe('Zstd Compression Support', () => {
   });
 
   describe('compression', () => {
-    const zstdAvailable = isZstdAvailable();
-
     it.skipIf(!zstdAvailable)('should produce .zst files smaller than originals', async () => {
       const content = compressibleContent(200);
       createTestFile(testDir, 'app.js', content);
