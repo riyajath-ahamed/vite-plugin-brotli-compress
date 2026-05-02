@@ -34,6 +34,9 @@ jobs:
       - name: Run type checking
         run: npx tsc --noEmit
 
+      - name: Build package
+        run: npm run build
+
       - name: Run tests
         run: npm run test:run
 
@@ -70,6 +73,9 @@ jobs:
 
       - name: Install Vite ${{ matrix.vite-version }}
         run: npm install --no-save --legacy-peer-deps vite@${{ matrix.vite-version }}
+
+      - name: Build package
+        run: npm run build
 
       - name: Run tests
         run: npm run test:run
