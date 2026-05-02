@@ -1,7 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
+import zlib from 'zlib';
 import brotliCompress, { CompressionType, CompressionStats, ZstdLevel } from '../index';
+
+function isZstdAvailable(): boolean {
+  if (typeof (zlib as any).createZstdCompress === 'function') return true;
+  try {
+    require('@mongodb-js/zstd');
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function createTestDir(): string {
   const testDir = path.join(process.cwd(), 'test-fixtures', `test-zstd-${Date.now()}`);
@@ -71,7 +82,9 @@ describe('Zstd Compression Support', () => {
   });
 
   describe('compression', () => {
-    it('should produce .zst files smaller than originals', async () => {
+    const zstdAvailable = isZstdAvailable();
+
+    it.skipIf(!zstdAvailable)('should produce .zst files smaller than originals', async () => {
       const content = compressibleContent(200);
       createTestFile(testDir, 'app.js', content);
 
@@ -94,7 +107,7 @@ describe('Zstd Compression Support', () => {
       expect(compressedSize).toBeGreaterThan(0);
     });
 
-    it('should compress multiple files', async () => {
+    it.skipIf(!zstdAvailable)('should compress multiple files', async () => {
       const content = compressibleContent(100);
       createTestFile(testDir, 'a.js', content);
       createTestFile(testDir, 'b.css', content);
@@ -113,7 +126,7 @@ describe('Zstd Compression Support', () => {
       expect(fs.existsSync(path.join(testDir, 'b.css.zst'))).toBe(true);
     });
 
-    it('should report correct stats via onComplete', async () => {
+    it.skipIf(!zstdAvailable)('should report correct stats via onComplete', async () => {
       const content = compressibleContent(200);
       createTestFile(testDir, 'app.js', content);
 
@@ -139,7 +152,7 @@ describe('Zstd Compression Support', () => {
       expect(receivedStats!.fileDetails[0].algorithm).toBe('zstd');
     });
 
-    it('should respect compressionThreshold with zstd', async () => {
+    it.skipIf(!zstdAvailable)('should respect compressionThreshold with zstd', async () => {
       // Use pseudo-random content that won't compress well
       const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()';
       let content = '';
@@ -167,7 +180,7 @@ describe('Zstd Compression Support', () => {
       expect(receivedStats!.skippedFiles).toBeGreaterThan(0);
     });
 
-    it('should work with verifyIntegrity', async () => {
+    it.skipIf(!zstdAvailable)('should work with verifyIntegrity', async () => {
       const content = compressibleContent(200);
       createTestFile(testDir, 'app.js', content);
 
@@ -191,7 +204,7 @@ describe('Zstd Compression Support', () => {
       expect(receivedStats!.failedFiles).toBe(0);
     });
 
-    it('should not produce .br or .gz files when type is ZSTD', async () => {
+    it.skipIf(!zstdAvailable)('should not produce .br or .gz files when type is ZSTD', async () => {
       const content = compressibleContent(200);
       createTestFile(testDir, 'app.js', content);
 
@@ -210,7 +223,7 @@ describe('Zstd Compression Support', () => {
       expect(fs.existsSync(path.join(testDir, 'app.js.gz'))).toBe(false);
     });
 
-    it('should include zstd in build report', async () => {
+    it.skipIf(!zstdAvailable)('should include zstd in build report', async () => {
       const content = compressibleContent(200);
       createTestFile(testDir, 'app.js', content);
 

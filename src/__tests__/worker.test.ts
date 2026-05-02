@@ -1,7 +1,20 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
+import zlib from 'zlib';
 import brotliCompress, { CompressionType, CompressionStats } from '../index';
+
+function isZstdAvailable(): boolean {
+  if (typeof (zlib as any).createZstdCompress === 'function') return true;
+  try {
+    require('@mongodb-js/zstd');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const zstdAvailable = isZstdAvailable();
 
 function createTestDir(): string {
   const testDir = path.join(process.cwd(), 'test-fixtures', `test-worker-${Date.now()}`);
@@ -90,7 +103,7 @@ describe('Worker Threads Compression', () => {
     expect(receivedStats!.gzipFiles).toBe(1);
   });
 
-  it('should compress files with zstd using worker threads', async () => {
+  it.skipIf(!zstdAvailable)('should compress files with zstd using worker threads', async () => {
     const content = compressibleContent(200);
     createTestFile(testDir, 'app.js', content);
 
