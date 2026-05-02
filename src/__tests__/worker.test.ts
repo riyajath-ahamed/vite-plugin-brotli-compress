@@ -4,8 +4,12 @@ import path from 'path';
 import zlib from 'zlib';
 import brotliCompress, { CompressionType, CompressionStats } from '../index';
 
-const zstdAvailable = typeof (zlib as any).createZstdCompress === 'function'
-  || await import('@mongodb-js/zstd').then(() => true, () => false);
+const zstdAvailable = (() => {
+  if (typeof (zlib as any).createZstdCompress === 'function') {
+    try { (zlib as any).createZstdCompress(); return true; } catch { /* not usable */ }
+  }
+  return false;
+})() || await import('@mongodb-js/zstd').then(() => true, () => false);
 
 function createTestDir(): string {
   const testDir = path.join(process.cwd(), 'test-fixtures', `test-worker-${Date.now()}`);
