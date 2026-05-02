@@ -2,6 +2,57 @@ import type { Plugin, ResolvedConfig } from 'vite';
 import path from 'path';
 import fs from 'fs';
 import zlib from 'zlib';
+import crypto from 'crypto';
+import { Transform } from 'stream';
+import { fileURLToPath } from 'url';
+
+type ZstdCompressFunction = (buf: Buffer, level: number) => Promise<Buffer>;
+
+let zstdCompress: ZstdCompressFunction | null = null;
+let zstdLoadAttempted = false;
+let nativeZstdAvailable: boolean | null = null;
+
+function hasNativeZstd(): boolean {
+  if (nativeZstdAvailable !== null) return nativeZstdAvailable;
+  nativeZstdAvailable = typeof (zlib as any).createZstdCompress === 'function';
+  return nativeZstdAvailable;
+}
+
+async function getZstdCompress(): Promise<ZstdCompressFunction> {
+  if (zstdCompress) return zstdCompress;
+  if (zstdLoadAttempted) {
+    throw new Error(
+      'Zstd compression is not available. Either upgrade to Node.js 21.7+ ' +
+      '(which has native zstd in zlib) or install the "@mongodb-js/zstd" package.'
+    );
+  }
+  zstdLoadAttempted = true;
+
+  if (hasNativeZstd()) {
+    zstdCompress = async (buf: Buffer, level: number) => {
+      return new Promise<Buffer>((resolve, reject) => {
+        (zlib as any).zstdCompress(buf, { params: { level } }, (err: Error | null, result: Buffer) => {
+          if (err) reject(err);
+          else resolve(result);
+        });
+      });
+    };
+    return zstdCompress;
+  }
+
+  try {
+    const mod = await import('@mongodb-js/zstd');
+    const compressFn = mod.compress || (mod.default && mod.default.compress);
+    if (!compressFn) throw new Error('compress function not found');
+    zstdCompress = compressFn as ZstdCompressFunction;
+    return zstdCompress;
+  } catch (e) {
+    throw new Error(
+      'Zstd compression requires Node.js 21.7+ or the "@mongodb-js/zstd" package. ' +
+      `Install it with: npm install @mongodb-js/zstd\nOriginal error: ${(e as Error).message}`
+    );
+  }
+}
 
 /**
  * Compression algorithms supported by the plugin.
@@ -11,6 +62,8 @@ export enum CompressionType {
   BROTLI = 'brotli',
   /** Gzip compression only */
   GZIP = 'gzip',
+  /** Zstandard compression only */
+  ZSTD = 'zstd',
   /** Both Brotli and Gzip compression */
   BOTH = 'both'
 }
@@ -50,6 +103,25 @@ export enum GzipLevel {
 }
 
 /**
+ * Zstandard compression levels.
+ */
+export enum ZstdLevel {
+  /** Fastest compression */
+  FASTEST = 1,
+  /** Fast compression */
+  FAST = 3,
+  /** Default compression */
+  // eslint-disable-next-line @typescript-eslint/no-duplicate-enum-values
+  DEFAULT = 3,
+  /** High compression */
+  HIGH = 9,
+  /** Very high compression */
+  VERY_HIGH = 15,
+  /** Maximum compression */
+  MAXIMUM = 22
+}
+
+/**
  * Interface for plugin options.
  */
 export interface BrotliOptions {
@@ -78,6 +150,11 @@ export interface BrotliOptions {
    * @default GzipLevel.DEFAULT (6)
    */
   gzipLevel?: GzipLevel | number;
+  /**
+   * Zstd compression level (1-22).
+   * @default ZstdLevel.DEFAULT (3)
+   */
+  zstdLevel?: ZstdLevel | number;
   /**
    * Minimum file size in bytes to compress (files smaller than this will be skipped).
    * @default 1024 (1KB)
@@ -163,6 +240,30 @@ export interface BrotliOptions {
    * Size budget configuration. Warns or errors if compressed output exceeds limits.
    */
   budget?: BudgetOptions;
+  /**
+   * File path for writing a JSON compression report after the build.
+   * Includes per-file details, totals, timing, and compression ratios.
+   * @default undefined (no report written)
+   */
+  compressionReport?: string;
+  /**
+   * Whether to verify compressed file integrity by computing and comparing
+   * SHA-256 hashes during write and after read-back.
+   * @default false
+   */
+  verifyIntegrity?: boolean;
+  /**
+   * Whether to use worker threads for compression.
+   * Offloads CPU-bound compression to a thread pool for faster builds.
+   * Requires the "piscina" package to be installed.
+   * @default false
+   */
+  useWorkerThreads?: boolean;
+  /**
+   * Maximum number of worker threads.
+   * @default number of CPU cores
+   */
+  maxWorkerThreads?: number;
 }
 
 /**
@@ -200,6 +301,7 @@ export interface CompressionStats {
   timeElapsed: number;
   brotliFiles?: number;
   gzipFiles?: number;
+  zstdFiles?: number;
   /** Per-file compression details for budget checks and reporting. */
   fileDetails: FileCompressionDetail[];
 }
@@ -211,7 +313,7 @@ export interface FileCompressionDetail {
   filePath: string;
   originalSize: number;
   compressedSize: number;
-  algorithm: 'brotli' | 'gzip';
+  algorithm: 'brotli' | 'gzip' | 'zstd';
 }
 
 /**
@@ -287,6 +389,9 @@ function compressedFileExists(filePath: string, type: CompressionType): boolean 
   if (type === CompressionType.GZIP || type === CompressionType.BOTH) {
     if (fs.existsSync(`${filePath}.gz`)) return true;
   }
+  if (type === CompressionType.ZSTD) {
+    if (fs.existsSync(`${filePath}.zst`)) return true;
+  }
   return false;
 }
 
@@ -303,6 +408,7 @@ export default function brotliCompress(options: BrotliOptions = {}): Plugin {
     verbose = true,
     quality = BrotliQuality.DEFAULT,
     gzipLevel = GzipLevel.DEFAULT,
+    zstdLevel = ZstdLevel.DEFAULT,
     minSize = 1024,
     maxSize,
     deleteOriginal = false,
@@ -318,7 +424,11 @@ export default function brotliCompress(options: BrotliOptions = {}): Plugin {
     compressionThreshold = 0,
     onProgress,
     onComplete,
-    budget
+    budget,
+    compressionReport,
+    verifyIntegrity = false,
+    useWorkerThreads = false,
+    maxWorkerThreads
   } = options;
 
   return {
@@ -335,8 +445,9 @@ export default function brotliCompress(options: BrotliOptions = {}): Plugin {
       const outDir = viteConfig.build.outDir;
       
       if (verbose) {
-        const compressionType = type === CompressionType.BOTH ? 'Brotli and Gzip' : 
-                               type === CompressionType.GZIP ? 'Gzip' : 'Brotli';
+        const compressionType = type === CompressionType.BOTH ? 'Brotli and Gzip' :
+                               type === CompressionType.GZIP ? 'Gzip' :
+                               type === CompressionType.ZSTD ? 'Zstd' : 'Brotli';
         console.log(`\n[vite-plugin-brotli-compress] Starting ${compressionType} compression...`);
       }
 
@@ -366,6 +477,7 @@ export default function brotliCompress(options: BrotliOptions = {}): Plugin {
           type,
           quality,
           gzipLevel,
+          zstdLevel,
           deleteOriginal,
           parallel,
           maxParallel,
@@ -374,7 +486,10 @@ export default function brotliCompress(options: BrotliOptions = {}): Plugin {
           retryAttempts,
           errorCallback,
           compressionThreshold,
-          onProgress
+          onProgress,
+          verifyIntegrity,
+          useWorkerThreads,
+          maxWorkerThreads
         });
 
         const timeElapsed = Date.now() - startTime;
@@ -393,6 +508,14 @@ export default function brotliCompress(options: BrotliOptions = {}): Plugin {
         if (onComplete) {
           onComplete(stats);
         }
+
+        // Write compression report
+        if (compressionReport) {
+          writeCompressionReport(stats, compressionReport, type);
+          if (verbose) {
+            console.log(`[vite-plugin-brotli-compress] Report written to ${compressionReport}`);
+          }
+        }
       } catch (error) {
         console.error('[vite-plugin-brotli-compress] Error during compression:', error);
         if (!continueOnError) {
@@ -410,6 +533,7 @@ interface CompressionOptions {
   type: CompressionType;
   quality: BrotliQuality | number;
   gzipLevel: GzipLevel | number;
+  zstdLevel: ZstdLevel | number;
   deleteOriginal: boolean;
   parallel: boolean;
   maxParallel: number;
@@ -419,6 +543,9 @@ interface CompressionOptions {
   errorCallback?: (error: Error, filePath: string) => void;
   compressionThreshold: number;
   onProgress?: (progress: CompressionProgress) => void;
+  verifyIntegrity: boolean;
+  useWorkerThreads: boolean;
+  maxWorkerThreads?: number;
 }
 
 /**
@@ -517,6 +644,7 @@ interface FileCompressResult {
   totalCompressedSize: number;
   brotliFiles?: number;
   gzipFiles?: number;
+  zstdFiles?: number;
   fileDetails: FileCompressionDetail[];
 }
 
@@ -531,6 +659,7 @@ function mergeFileResult(stats: CompressionStats, result: FileCompressResult): v
   stats.totalCompressedSize += result.totalCompressedSize;
   stats.brotliFiles = (stats.brotliFiles || 0) + (result.brotliFiles || 0);
   stats.gzipFiles = (stats.gzipFiles || 0) + (result.gzipFiles || 0);
+  stats.zstdFiles = (stats.zstdFiles || 0) + (result.zstdFiles || 0);
   stats.fileDetails.push(...result.fileDetails);
 }
 
@@ -571,50 +700,62 @@ async function compressFiles(
     timeElapsed: 0,
     brotliFiles: 0,
     gzipFiles: 0,
+    zstdFiles: 0,
     fileDetails: []
   };
 
   let processedIndex = 0;
+  let workerPool: any = null;
 
-  if (options.parallel) {
-    // Compress files in parallel with concurrency limit
-    const chunks = chunkArray(files, options.maxParallel);
+  if (options.useWorkerThreads) {
+    workerPool = await createWorkerPool(options.maxWorkerThreads);
+  }
 
-    for (const chunk of chunks) {
-      const results = await Promise.allSettled(
-        chunk.map(filePath => compressFileWithRetry(filePath, options))
-      );
+  try {
+    if (options.parallel) {
+      // Compress files in parallel with concurrency limit
+      const chunks = chunkArray(files, options.maxParallel);
 
-      for (const result of results) {
-        if (result.status === 'fulfilled') {
-          mergeFileResult(stats, result.value);
-        } else {
+      for (const chunk of chunks) {
+        const results = await Promise.allSettled(
+          chunk.map(filePath => compressFileWithRetry(filePath, options, workerPool))
+        );
+
+        for (const result of results) {
+          if (result.status === 'fulfilled') {
+            mergeFileResult(stats, result.value);
+          } else {
+            stats.failedFiles++;
+            if (options.verbose) {
+              console.warn(`[vite-plugin-brotli-compress] Failed to compress file: ${result.reason}`);
+            }
+          }
+          emitProgress(options, files[processedIndex], processedIndex, files.length);
+          processedIndex++;
+        }
+      }
+    } else {
+      // Compress files sequentially
+      for (const filePath of files) {
+        try {
+          const result = await compressFileWithRetry(filePath, options, workerPool);
+          mergeFileResult(stats, result);
+        } catch (error) {
           stats.failedFiles++;
           if (options.verbose) {
-            console.warn(`[vite-plugin-brotli-compress] Failed to compress file: ${result.reason}`);
+            console.warn(`[vite-plugin-brotli-compress] Failed to compress file ${filePath}:`, error);
+          }
+          if (options.errorCallback) {
+            options.errorCallback(error as Error, filePath);
           }
         }
-        emitProgress(options, files[processedIndex], processedIndex, files.length);
+        emitProgress(options, filePath, processedIndex, files.length);
         processedIndex++;
       }
     }
-  } else {
-    // Compress files sequentially
-    for (const filePath of files) {
-      try {
-        const result = await compressFileWithRetry(filePath, options);
-        mergeFileResult(stats, result);
-      } catch (error) {
-        stats.failedFiles++;
-        if (options.verbose) {
-          console.warn(`[vite-plugin-brotli-compress] Failed to compress file ${filePath}:`, error);
-        }
-        if (options.errorCallback) {
-          options.errorCallback(error as Error, filePath);
-        }
-      }
-      emitProgress(options, filePath, processedIndex, files.length);
-      processedIndex++;
+  } finally {
+    if (workerPool) {
+      await workerPool.destroy();
     }
   }
 
@@ -626,16 +767,145 @@ async function compressFiles(
 }
 
 /**
+ * Resolves the path to the compression worker file.
+ */
+function getWorkerPath(): string {
+  const currentDir = typeof __dirname !== 'undefined'
+    ? __dirname
+    : path.dirname(fileURLToPath(import.meta.url));
+
+  const candidates = [
+    path.join(currentDir, 'compression-worker.mjs'),
+    path.join(currentDir, 'compression-worker.cjs'),
+    path.join(currentDir, '..', 'dist', 'compression-worker.mjs'),
+    path.join(currentDir, '..', 'dist', 'compression-worker.cjs'),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
+  throw new Error(
+    '[vite-plugin-brotli-compress] Worker file not found. ' +
+    'Ensure the package is properly installed (run npm run build).'
+  );
+}
+
+/**
+ * Creates a Piscina worker pool for compression.
+ */
+async function createWorkerPool(maxThreads?: number): Promise<any> {
+  let Piscina: any;
+  try {
+    const mod = await import('piscina');
+    Piscina = mod.default || mod.Piscina;
+  } catch {
+    throw new Error(
+      'Worker threads require the "piscina" package. ' +
+      'Install it with: npm install piscina'
+    );
+  }
+
+  return new Piscina({
+    filename: getWorkerPath(),
+    maxThreads,
+  });
+}
+
+/**
+ * Compresses a single file using a worker thread.
+ */
+async function compressFileWithWorker(
+  filePath: string,
+  pool: any,
+  options: CompressionOptions
+): Promise<FileCompressResult> {
+  const stats = fs.statSync(filePath);
+  const results: FileCompressResult = {
+    compressedFiles: 0,
+    failedFiles: 0,
+    skippedFiles: 0,
+    totalOriginalSize: stats.size,
+    totalCompressedSize: 0,
+    brotliFiles: 0,
+    gzipFiles: 0,
+    zstdFiles: 0,
+    fileDetails: []
+  };
+
+  const algorithms: Array<'brotli' | 'gzip' | 'zstd'> = [];
+  if (options.type === CompressionType.BROTLI || options.type === CompressionType.BOTH) algorithms.push('brotli');
+  if (options.type === CompressionType.GZIP || options.type === CompressionType.BOTH) algorithms.push('gzip');
+  if (options.type === CompressionType.ZSTD) algorithms.push('zstd');
+
+  for (const algo of algorithms) {
+    try {
+      const workerResult = await pool.run({
+        filePath,
+        algorithm: algo,
+        quality: options.quality,
+        gzipLevel: options.gzipLevel,
+        zstdLevel: options.zstdLevel,
+        verifyIntegrity: options.verifyIntegrity,
+      });
+
+      if (meetsThreshold(stats.size, workerResult.compressedSize, options.compressionThreshold, workerResult.compressedPath, options.verbose)) {
+        if (options.verifyIntegrity && workerResult.hash) {
+          const verified = await verifyCompressedFile(workerResult.compressedPath, workerResult.hash);
+          if (!verified) {
+            if (options.verbose) {
+              console.warn(`[vite-plugin-brotli-compress] Integrity check FAILED for ${workerResult.compressedPath}`);
+            }
+            results.failedFiles++;
+            try { fs.unlinkSync(workerResult.compressedPath); } catch { /* ignore */ }
+            continue;
+          }
+        }
+
+        results.compressedFiles++;
+        results.totalCompressedSize += workerResult.compressedSize;
+        if (algo === 'brotli') results.brotliFiles = 1;
+        if (algo === 'gzip') results.gzipFiles = 1;
+        if (algo === 'zstd') results.zstdFiles = 1;
+        results.fileDetails.push({
+          filePath: workerResult.compressedPath,
+          originalSize: stats.size,
+          compressedSize: workerResult.compressedSize,
+          algorithm: algo,
+        });
+      } else {
+        results.skippedFiles++;
+      }
+    } catch (error) {
+      results.failedFiles++;
+      if (options.verbose) {
+        console.warn(`[vite-plugin-brotli-compress] ${algo} worker compression failed for ${filePath}:`, error);
+      }
+    }
+  }
+
+  if (options.deleteOriginal && results.compressedFiles > 0) {
+    try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+  }
+
+  return results;
+}
+
+/**
  * Compresses a file with retry logic.
  */
 async function compressFileWithRetry(
   filePath: string,
-  options: CompressionOptions
+  options: CompressionOptions,
+  workerPool?: any
 ): Promise<FileCompressResult> {
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= options.retryAttempts; attempt++) {
     try {
+      if (workerPool) {
+        return await compressFileWithWorker(filePath, workerPool, options);
+      }
       return await compressFile(filePath, options);
     } catch (error) {
       lastError = error as Error;
@@ -654,6 +924,20 @@ async function compressFileWithRetry(
     options.errorCallback(lastError!, filePath);
   }
   throw lastError;
+}
+
+/**
+ * Verifies a compressed file's integrity by comparing its SHA-256 hash
+ * against the expected hash computed during write.
+ */
+function verifyCompressedFile(compressedPath: string, expectedHash: string): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const readStream = fs.createReadStream(compressedPath);
+    readStream.on('data', (chunk) => hash.update(chunk));
+    readStream.on('end', () => resolve(hash.digest('hex') === expectedHash));
+    readStream.on('error', reject);
+  });
 }
 
 /**
@@ -718,15 +1002,36 @@ function compressFile(
           const compressedPath = `${filePath}.br`;
 
           if (meetsThreshold(stats.size, brotliResult.compressedSize, options.compressionThreshold, compressedPath, options.verbose)) {
-            results.compressedFiles++;
-            results.totalCompressedSize += brotliResult.compressedSize;
-            results.brotliFiles = 1;
-            results.fileDetails.push({
-              filePath: compressedPath,
-              originalSize: stats.size,
-              compressedSize: brotliResult.compressedSize,
-              algorithm: 'brotli'
-            });
+            if (options.verifyIntegrity && brotliResult.hash) {
+              const verified = await verifyCompressedFile(compressedPath, brotliResult.hash);
+              if (!verified) {
+                if (options.verbose) {
+                  console.warn(`[vite-plugin-brotli-compress] Integrity check FAILED for ${compressedPath}`);
+                }
+                results.failedFiles++;
+                try { fs.unlinkSync(compressedPath); } catch { /* ignore */ }
+              } else {
+                results.compressedFiles++;
+                results.totalCompressedSize += brotliResult.compressedSize;
+                results.brotliFiles = 1;
+                results.fileDetails.push({
+                  filePath: compressedPath,
+                  originalSize: stats.size,
+                  compressedSize: brotliResult.compressedSize,
+                  algorithm: 'brotli'
+                });
+              }
+            } else {
+              results.compressedFiles++;
+              results.totalCompressedSize += brotliResult.compressedSize;
+              results.brotliFiles = 1;
+              results.fileDetails.push({
+                filePath: compressedPath,
+                originalSize: stats.size,
+                compressedSize: brotliResult.compressedSize,
+                algorithm: 'brotli'
+              });
+            }
           } else {
             results.skippedFiles++;
           }
@@ -745,15 +1050,36 @@ function compressFile(
           const compressedPath = `${filePath}.gz`;
 
           if (meetsThreshold(stats.size, gzipResult.compressedSize, options.compressionThreshold, compressedPath, options.verbose)) {
-            results.compressedFiles++;
-            results.totalCompressedSize += gzipResult.compressedSize;
-            results.gzipFiles = 1;
-            results.fileDetails.push({
-              filePath: compressedPath,
-              originalSize: stats.size,
-              compressedSize: gzipResult.compressedSize,
-              algorithm: 'gzip'
-            });
+            if (options.verifyIntegrity && gzipResult.hash) {
+              const verified = await verifyCompressedFile(compressedPath, gzipResult.hash);
+              if (!verified) {
+                if (options.verbose) {
+                  console.warn(`[vite-plugin-brotli-compress] Integrity check FAILED for ${compressedPath}`);
+                }
+                results.failedFiles++;
+                try { fs.unlinkSync(compressedPath); } catch { /* ignore */ }
+              } else {
+                results.compressedFiles++;
+                results.totalCompressedSize += gzipResult.compressedSize;
+                results.gzipFiles = 1;
+                results.fileDetails.push({
+                  filePath: compressedPath,
+                  originalSize: stats.size,
+                  compressedSize: gzipResult.compressedSize,
+                  algorithm: 'gzip'
+                });
+              }
+            } else {
+              results.compressedFiles++;
+              results.totalCompressedSize += gzipResult.compressedSize;
+              results.gzipFiles = 1;
+              results.fileDetails.push({
+                filePath: compressedPath,
+                originalSize: stats.size,
+                compressedSize: gzipResult.compressedSize,
+                algorithm: 'gzip'
+              });
+            }
           } else {
             results.skippedFiles++;
           }
@@ -761,6 +1087,54 @@ function compressFile(
           results.failedFiles++;
           if (options.verbose) {
             console.warn(`[vite-plugin-brotli-compress] Gzip compression failed for ${filePath}:`, error);
+          }
+        }
+      }
+
+      // Compress with Zstd if requested
+      if (options.type === CompressionType.ZSTD) {
+        try {
+          const zstdResult = await compressWithZstd(filePath, options);
+          const compressedPath = `${filePath}.zst`;
+
+          if (meetsThreshold(stats.size, zstdResult.compressedSize, options.compressionThreshold, compressedPath, options.verbose)) {
+            if (options.verifyIntegrity && zstdResult.hash) {
+              const verified = await verifyCompressedFile(compressedPath, zstdResult.hash);
+              if (!verified) {
+                if (options.verbose) {
+                  console.warn(`[vite-plugin-brotli-compress] Integrity check FAILED for ${compressedPath}`);
+                }
+                results.failedFiles++;
+                try { fs.unlinkSync(compressedPath); } catch { /* ignore */ }
+              } else {
+                results.compressedFiles++;
+                results.totalCompressedSize += zstdResult.compressedSize;
+                results.zstdFiles = 1;
+                results.fileDetails.push({
+                  filePath: compressedPath,
+                  originalSize: stats.size,
+                  compressedSize: zstdResult.compressedSize,
+                  algorithm: 'zstd'
+                });
+              }
+            } else {
+              results.compressedFiles++;
+              results.totalCompressedSize += zstdResult.compressedSize;
+              results.zstdFiles = 1;
+              results.fileDetails.push({
+                filePath: compressedPath,
+                originalSize: stats.size,
+                compressedSize: zstdResult.compressedSize,
+                algorithm: 'zstd'
+              });
+            }
+          } else {
+            results.skippedFiles++;
+          }
+        } catch (error) {
+          results.failedFiles++;
+          if (options.verbose) {
+            console.warn(`[vite-plugin-brotli-compress] Zstd compression failed for ${filePath}:`, error);
           }
         }
       }
@@ -786,7 +1160,7 @@ function compressFile(
 /**
  * Compresses a file using Brotli.
  */
-function compressWithBrotli(filePath: string, options: CompressionOptions): Promise<{compressedSize: number}> {
+function compressWithBrotli(filePath: string, options: CompressionOptions): Promise<{compressedSize: number, hash?: string}> {
   return new Promise((resolve, reject) => {
     const compressStream = zlib.createBrotliCompress({
       params: {
@@ -798,12 +1172,26 @@ function compressWithBrotli(filePath: string, options: CompressionOptions): Prom
     const compressedPath = `${filePath}.br`;
     const writeStream = fs.createWriteStream(compressedPath);
 
-    readStream.pipe(compressStream).pipe(writeStream);
+    let writeHash: crypto.Hash | undefined;
+    if (options.verifyIntegrity) {
+      writeHash = crypto.createHash('sha256');
+      const hashTransform = new Transform({
+        transform(chunk, _encoding, callback) {
+          writeHash!.update(chunk);
+          this.push(chunk);
+          callback();
+        },
+      });
+      readStream.pipe(compressStream).pipe(hashTransform).pipe(writeStream);
+    } else {
+      readStream.pipe(compressStream).pipe(writeStream);
+    }
 
     writeStream.on('finish', () => {
       try {
         const compressedSize = fs.statSync(compressedPath).size;
-        resolve({ compressedSize });
+        const hash = writeHash ? writeHash.digest('hex') : undefined;
+        resolve({ compressedSize, hash });
       } catch (error) {
         reject(error);
       }
@@ -817,7 +1205,7 @@ function compressWithBrotli(filePath: string, options: CompressionOptions): Prom
 /**
  * Compresses a file using Gzip.
  */
-function compressWithGzip(filePath: string, options: CompressionOptions): Promise<{compressedSize: number}> {
+function compressWithGzip(filePath: string, options: CompressionOptions): Promise<{compressedSize: number, hash?: string}> {
   return new Promise((resolve, reject) => {
     const compressStream = zlib.createGzip({
       level: Math.min(Math.max(options.gzipLevel, 0), 9),
@@ -827,12 +1215,26 @@ function compressWithGzip(filePath: string, options: CompressionOptions): Promis
     const compressedPath = `${filePath}.gz`;
     const writeStream = fs.createWriteStream(compressedPath);
 
-    readStream.pipe(compressStream).pipe(writeStream);
+    let writeHash: crypto.Hash | undefined;
+    if (options.verifyIntegrity) {
+      writeHash = crypto.createHash('sha256');
+      const hashTransform = new Transform({
+        transform(chunk, _encoding, callback) {
+          writeHash!.update(chunk);
+          this.push(chunk);
+          callback();
+        },
+      });
+      readStream.pipe(compressStream).pipe(hashTransform).pipe(writeStream);
+    } else {
+      readStream.pipe(compressStream).pipe(writeStream);
+    }
 
     writeStream.on('finish', () => {
       try {
         const compressedSize = fs.statSync(compressedPath).size;
-        resolve({ compressedSize });
+        const hash = writeHash ? writeHash.digest('hex') : undefined;
+        resolve({ compressedSize, hash });
       } catch (error) {
         reject(error);
       }
@@ -841,6 +1243,65 @@ function compressWithGzip(filePath: string, options: CompressionOptions): Promis
     writeStream.on('error', reject);
     readStream.on('error', reject);
   });
+}
+
+/**
+ * Compresses a file using Zstandard.
+ * Uses native zlib.createZstdCompress (Node 21.7+) when available,
+ * otherwise falls back to @mongodb-js/zstd buffer-based compression.
+ */
+async function compressWithZstd(filePath: string, options: CompressionOptions): Promise<{compressedSize: number, hash?: string}> {
+  const compressedPath = `${filePath}.zst`;
+  const level = Math.min(Math.max(options.zstdLevel, 1), 22);
+
+  if (hasNativeZstd()) {
+    return new Promise((resolve, reject) => {
+      const compressStream = (zlib as any).createZstdCompress({ params: { level } });
+      const readStream = fs.createReadStream(filePath);
+      const writeStream = fs.createWriteStream(compressedPath);
+
+      let writeHash: crypto.Hash | undefined;
+      if (options.verifyIntegrity) {
+        writeHash = crypto.createHash('sha256');
+        const hashTransform = new Transform({
+          transform(chunk, _encoding, callback) {
+            writeHash!.update(chunk);
+            this.push(chunk);
+            callback();
+          },
+        });
+        readStream.pipe(compressStream).pipe(hashTransform).pipe(writeStream);
+      } else {
+        readStream.pipe(compressStream).pipe(writeStream);
+      }
+
+      writeStream.on('finish', () => {
+        try {
+          const compressedSize = fs.statSync(compressedPath).size;
+          const hash = writeHash ? writeHash.digest('hex') : undefined;
+          resolve({ compressedSize, hash });
+        } catch (error) {
+          reject(error);
+        }
+      });
+
+      writeStream.on('error', reject);
+      readStream.on('error', reject);
+    });
+  }
+
+  const compress = await getZstdCompress();
+  const input = fs.readFileSync(filePath);
+  const compressed = await compress(Buffer.from(input), level);
+  fs.writeFileSync(compressedPath, compressed);
+
+  const compressedSize = fs.statSync(compressedPath).size;
+  let hash: string | undefined;
+  if (options.verifyIntegrity) {
+    hash = crypto.createHash('sha256').update(compressed).digest('hex');
+  }
+
+  return { compressedSize, hash };
 }
 
 /**
@@ -894,6 +1355,45 @@ function checkBudget(stats: CompressionStats, budget: BudgetOptions): void {
 }
 
 /**
+ * Writes compression stats to a JSON report file.
+ */
+function writeCompressionReport(stats: CompressionStats, reportPath: string, type: CompressionType): void {
+  const report = {
+    version: '1.0',
+    timestamp: new Date().toISOString(),
+    summary: {
+      totalFiles: stats.totalFiles,
+      compressedFiles: stats.compressedFiles,
+      skippedFiles: stats.skippedFiles,
+      failedFiles: stats.failedFiles,
+      totalOriginalSize: stats.totalOriginalSize,
+      totalCompressedSize: stats.totalCompressedSize,
+      compressionRatio: stats.compressionRatio,
+      timeElapsed: stats.timeElapsed,
+      compressionType: type,
+      brotliFiles: stats.brotliFiles ?? 0,
+      gzipFiles: stats.gzipFiles ?? 0,
+      zstdFiles: stats.zstdFiles ?? 0,
+    },
+    files: stats.fileDetails.map(d => ({
+      filePath: d.filePath,
+      originalSize: d.originalSize,
+      compressedSize: d.compressedSize,
+      algorithm: d.algorithm,
+      savings: d.originalSize > 0
+        ? `${((d.originalSize - d.compressedSize) / d.originalSize * 100).toFixed(2)}%`
+        : '0%',
+    })),
+  };
+
+  const dir = path.dirname(reportPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
+}
+
+/**
  * Logs compression results to the console.
  */
 function logCompressionResults(stats: CompressionStats, type: CompressionType): void {
@@ -907,14 +1407,18 @@ function logCompressionResults(stats: CompressionStats, type: CompressionType): 
     console.log(`  Brotli files: ${stats.brotliFiles || 0}`);
     console.log(`  Gzip files: ${stats.gzipFiles || 0}`);
   }
-  
+  if (type === CompressionType.ZSTD) {
+    console.log(`  Zstd files: ${stats.zstdFiles || 0}`);
+  }
+
   console.log(`  Original size: ${formatBytes(stats.totalOriginalSize)}`);
   console.log(`  Compressed size: ${formatBytes(stats.totalCompressedSize)}`);
   console.log(`  Compression ratio: ${stats.compressionRatio.toFixed(2)}%`);
   console.log(`  Time elapsed: ${stats.timeElapsed}ms`);
-  
-  const compressionType = type === CompressionType.BOTH ? 'Brotli and Gzip' : 
-                         type === CompressionType.GZIP ? 'Gzip' : 'Brotli';
+
+  const compressionType = type === CompressionType.BOTH ? 'Brotli and Gzip' :
+                         type === CompressionType.GZIP ? 'Gzip' :
+                         type === CompressionType.ZSTD ? 'Zstd' : 'Brotli';
   console.log(`  ✨ ${compressionType} compression completed!\n`);
 }
 
