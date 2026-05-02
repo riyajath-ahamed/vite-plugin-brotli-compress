@@ -1,3 +1,14 @@
+## ⚠️ Package Renamed
+
+This package has moved to [vite-plugin-compressor](https://npmjs.com/package/vite-plugin-compressor).
+
+It now supports **Brotli**, **Zstd**, and **Gzip**.
+
+```bash
+npm install vite-plugin-compressor
+```
+
+
 <p align="center">
 <img src="https://github.com/riyajath-ahamed/vite-plugin-brotli-compress/blob/main/assets/riyajath-ahamed/vite-plugin-brotli-compress.svg" width="640" height="320" />
 </p>
