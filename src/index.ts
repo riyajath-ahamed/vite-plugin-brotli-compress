@@ -40,7 +40,7 @@ async function getZstdCompress(): Promise<ZstdCompressFunction> {
   if (hasNativeZstd()) {
     zstdCompress = async (buf: Buffer, level: number) => {
       return new Promise<Buffer>((resolve, reject) => {
-        (zlib as any).zstdCompress(buf, { params: { level } }, (err: Error | null, result: Buffer) => {
+        (zlib as any).zstdCompress(buf, { params: { [zlib.constants.ZSTD_c_compressionLevel]: level } }, (err: Error | null, result: Buffer) => {
           if (err) reject(err);
           else resolve(result);
         });
@@ -1265,7 +1265,9 @@ async function compressWithZstd(filePath: string, options: CompressionOptions): 
 
   if (hasNativeZstd()) {
     return new Promise((resolve, reject) => {
-      const compressStream = (zlib as any).createZstdCompress({ params: { level } });
+      const compressStream = (zlib as any).createZstdCompress({
+        params: { [zlib.constants.ZSTD_c_compressionLevel]: level },
+      });
       const readStream = fs.createReadStream(filePath);
       const writeStream = fs.createWriteStream(compressedPath);
 
@@ -1294,6 +1296,7 @@ async function compressWithZstd(filePath: string, options: CompressionOptions): 
         }
       });
 
+      compressStream.on('error', reject);
       writeStream.on('error', reject);
       readStream.on('error', reject);
     });

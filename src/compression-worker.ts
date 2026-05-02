@@ -114,7 +114,9 @@ export default async function compress(input: WorkerInput): Promise<WorkerOutput
         try { (zlib as any).createZstdCompress(); hasNative = true; } catch { /* unavailable */ }
       }
       if (hasNative) {
-        const stream = (zlib as any).createZstdCompress({ params: { level } });
+        const stream = (zlib as any).createZstdCompress({
+          params: { [zlib.constants.ZSTD_c_compressionLevel]: level },
+        });
         result = await compressWithStream(filePath, compressedPath, stream, verifyIntegrity);
       } else {
         result = await compressZstdBuffer(filePath, compressedPath, level, verifyIntegrity);
