@@ -4,12 +4,29 @@ import path from 'path';
 import zlib from 'zlib';
 import brotliCompress, { CompressionType, CompressionStats, ZstdLevel } from '../index';
 
-const zstdAvailable = (() => {
+const zstdAvailable = await (async () => {
+  const testBuf = Buffer.from('test');
   if (typeof (zlib as any).createZstdCompress === 'function') {
-    try { (zlib as any).createZstdCompress(); return true; } catch { /* not usable */ }
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const stream = (zlib as any).createZstdCompress();
+        const chunks: Buffer[] = [];
+        stream.on('data', (c: Buffer) => chunks.push(c));
+        stream.on('end', () => resolve());
+        stream.on('error', reject);
+        stream.end(testBuf);
+      });
+      return true;
+    } catch { /* not usable */ }
   }
+  try {
+    const mod = await import('@mongodb-js/zstd');
+    const fn = mod.compress || mod.default?.compress;
+    await fn(testBuf, 3);
+    return true;
+  } catch { /* not usable */ }
   return false;
-})() || await import('@mongodb-js/zstd').then(() => true, () => false);
+})();
 
 function createTestDir(): string {
   const testDir = path.join(process.cwd(), 'test-fixtures', `test-zstd-${Date.now()}`);
